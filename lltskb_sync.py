@@ -9,9 +9,12 @@
 用法：python3 lltskb_sync.py [--force]
 cron 友好：无变化 exit 0 静默。
 """
-import sys, os, re, io, json, hashlib, zipfile, shutil, csv
+import sys, os, io, json, hashlib, zipfile, shutil
 import urllib.request
 from datetime import datetime
+
+# 交路表解析逻辑统一在 parse_jlb.py，避免两份实现各自出 bug
+from parse_jlb import parse_jlb, write_csvs
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(BASE, "lltskb_data")
@@ -53,48 +56,6 @@ def load_state():
         return json.load(open(STATE, encoding="utf-8"))
     except Exception:
         return {}
-
-
-# ---------- jlb.dat 交路表解析 ----------
-# jlb.dat：车辆描述 与 交路链 交替，被控制字节(<0x20)分隔。按切片提取，完整不丢长链。
-_CODE = r'(?:DJ|[CDGJKLPSTYZ])?\d{1,5}(?:/\d+)?'   # DJ=动检; 白名单避免描述里 AC380V 误判
-_CHAIN = re.compile(_CODE + r'(?:#' + _CODE + r')+')
-_CJK = re.compile(r'[一-鿿]')
-_CARTYPE = re.compile(r'^\d{2}[A-Z]')
-
-
-def parse_jlb(raw):
-    runs = re.split(rb'[\x00-\x1f]+', raw)
-    rows, last = [], ""
-    for rb in runs:
-        s = rb.decode("utf-8", "ignore")
-        if len(s) < 2:
-            continue
-        m = _CHAIN.search(s)
-        if m and '#' in m.group():
-            parts = [p for p in m.group().split('#') if p and p != '0']
-            if len(parts) >= 2:
-                rows.append(('#'.join(parts), last, len(parts)))
-            continue
-        if _CJK.search(s) or _CARTYPE.match(s):
-            last = s.lstrip('+*!"$%&\'().-/ ').strip()
-    return rows
-
-
-def write_csvs(rows, outdir):
-    with open(os.path.join(outdir, "车次交路.csv"), "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f); w.writerow(["交路链", "车辆描述", "车次数"])
-        for chain, desc, cnt in rows:
-            w.writerow([chain, desc, cnt])
-    codemap = {}
-    for chain, desc, cnt in rows:
-        for c in chain.split('#'):
-            codemap.setdefault(c, (chain, desc))
-    with open(os.path.join(outdir, "车次查交路.csv"), "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f); w.writerow(["车次", "所在交路链", "车辆描述"])
-        for c in sorted(codemap):
-            w.writerow([c, codemap[c][0], codemap[c][1]])
-    return len(codemap)
 
 
 def data_version(zf):
