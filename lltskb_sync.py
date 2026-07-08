@@ -57,7 +57,8 @@ def load_state():
 
 # ---------- jlb.dat 交路表解析 ----------
 # jlb.dat：车辆描述 与 交路链 交替，被控制字节(<0x20)分隔。按切片提取，完整不丢长链。
-_CHAIN = re.compile(r'[A-Z]?\d{1,5}(?:/\d+)?(?:#[A-Z]?\d{1,5}(?:/\d+)?)+')
+_CODE = r'(?:DJ|[CDGJKLPSTYZ])?\d{1,5}(?:/\d+)?'   # DJ=动检; 白名单避免描述里 AC380V 误判
+_CHAIN = re.compile(_CODE + r'(?:#' + _CODE + r')+')
 _CJK = re.compile(r'[一-鿿]')
 _CARTYPE = re.compile(r'^\d{2}[A-Z]')
 
