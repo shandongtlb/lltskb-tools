@@ -1,78 +1,72 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""解析路路通离线交路表 jlb.dat：长度前缀分帧，配对(车辆描述, 交路链)。"""
-import re, csv
+"""
+解析路路通离线交路表 jlb.dat。
 
-raw = open('andb/jlb.dat', 'rb').read()
+jlb.dat 是二进制：车型/车辆描述 与 交路链 交替排列，被控制字节(<0x20)分隔。
+交路链 = 若干车次用 '#' 连接（'/' 表同一车次往返编号，如 Z158/5）。
+每条交路链关联其前最近出现的车辆描述。
 
-# 长度前缀扫描：位置 i 处取 1 字节 L(1..63)，其后 L 字节若为合法可读串则作为 token
-def is_readable(b):
-    try:
-        s = b.decode('utf-8')
-    except Exception:
-        return None
-    # 允许中文、字母数字、常见标点
-    if all(ord(ch) >= 0x20 or ch in '' for ch in s):
-        if not any(ord(ch) < 0x20 for ch in s):
-            return s
-    return None
+用法: python3 parse_jlb.py [jlb.dat 路径]   默认 ./jlb.dat
+输出: 车次交路.csv / 车次查交路.csv（与 jlb.dat 同目录）
+"""
+import sys, os, re, csv
 
-tokens = []  # (pos, str)
-i, n = 0, len(raw)
-while i < n:
-    L = raw[i]
-    if 2 <= L <= 63 and i + 1 + L <= n:
-        s = is_readable(raw[i+1:i+1+L])
-        if s and len(s) >= 2:
-            tokens.append((i, s))
-            i += 1 + L
+CHAIN = re.compile(r'[A-Z]?\d{1,5}(?:/\d+)?(?:#[A-Z]?\d{1,5}(?:/\d+)?)+')
+CJK = re.compile(r'[一-鿿]')
+CARTYPE = re.compile(r'^\d{2}[A-Z]')
+
+
+def parse_jlb(raw):
+    """返回 [(交路链, 车辆描述, 车次数)]，按控制字节切片，完整不丢长链。"""
+    runs = re.split(rb'[\x00-\x1f]+', raw)
+    rows, last_desc = [], ''
+    for rb in runs:
+        s = rb.decode('utf-8', 'ignore')
+        if len(s) < 2:
             continue
-    i += 1
+        m = CHAIN.search(s)
+        if m and '#' in m.group():
+            # 清理：去掉噪声段(空 / 独立 '0')
+            parts = [p for p in m.group().split('#') if p and p != '0']
+            if len(parts) >= 2:
+                rows.append(('#'.join(parts), last_desc, len(parts)))
+            continue
+        # 车辆描述：含中文，或形如 25T/25G/25B 的车型代码
+        if CJK.search(s) or CARTYPE.match(s):
+            # 去掉可能泄漏进来的前导长度字节(单个 ASCII 符号)
+            last_desc = s.lstrip('+*!"$%&\'().-/ ').strip()
+    return rows
 
-# 分类
-chain_re = re.compile(r'^[A-Z]?\d{1,5}(?:/\d+)?(?:#[A-Z]?\d{1,5}(?:/\d+)?)+$')
-def is_chain(s):
-    return bool(chain_re.match(s))
-def is_desc(s):
-    return ('型' in s) or ('供风' in s) or ('AC380' in s) or ('DC600' in s) or ('集便' in s)
 
-# 配对：每条链关联最近一次出现的描述
-rows = []
-last_desc = ''
-for pos, s in tokens:
-    if is_desc(s):
-        last_desc = s
-    elif is_chain(s):
-        codes = s.split('#')
-        rows.append((s, last_desc, len(codes)))
-
-# 输出 CSV
-with open('车次交路_路路通离线.csv', 'w', newline='', encoding='utf-8-sig') as f:
-    w = csv.writer(f)
-    w.writerow(['交路链', '车辆描述', '车次数'])
+def write_csvs(rows, outdir):
+    with open(os.path.join(outdir, "车次交路.csv"), "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["交路链", "车辆描述", "车次数"])
+        for chain, desc, cnt in rows:
+            w.writerow([chain, desc, cnt])
+    codemap = {}
     for chain, desc, cnt in rows:
-        w.writerow([chain, desc, cnt])
+        for c in chain.split('#'):
+            codemap.setdefault(c, (chain, desc))
+    with open(os.path.join(outdir, "车次查交路.csv"), "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["车次", "所在交路链", "车辆描述"])
+        for c in sorted(codemap):
+            w.writerow([c, codemap[c][0], codemap[c][1]])
+    return len(codemap)
 
-# 车次->交路链 反查表
-codemap = {}
-for chain, desc, cnt in rows:
-    for c in chain.split('#'):
-        codemap.setdefault(c, []).append((chain, desc))
-with open('车次查交路_路路通离线.csv', 'w', newline='', encoding='utf-8-sig') as f:
-    w = csv.writer(f)
-    w.writerow(['车次', '所在交路链', '车辆描述'])
-    for c in sorted(codemap):
-        chain, desc = codemap[c][0]
-        w.writerow([c, chain, desc])
 
-allcodes = set(codemap)
-from collections import Counter
-pref = Counter(re.match(r'([A-Z]?)', c).group(1) or '数字' for c in allcodes)
-print(f"交路链: {len(rows)} 条")
-print(f"覆盖车次: {len(allcodes)} 个")
-print(f"车次首字母分布: {dict(pref)}")
-print(f"含车辆描述的链: {sum(1 for _,d,_ in rows if d)} / {len(rows)}")
-print("\n样本(链 | 描述):")
-for chain, desc, cnt in rows[:12]:
-    print(f"  [{cnt}趟] {chain}  <<  {desc[:30]}")
-print("\n输出: 车次交路_路路通离线.csv / 车次查交路_路路通离线.csv")
+if __name__ == "__main__":
+    path = sys.argv[1] if len(sys.argv) > 1 else "jlb.dat"
+    raw = open(path, "rb").read()
+    rows = parse_jlb(raw)
+    outdir = os.path.dirname(os.path.abspath(path)) or "."
+    ncodes = write_csvs(rows, outdir)
+    print(f"交路链: {len(rows)} 条")
+    print(f"覆盖车次: {ncodes} 个")
+    withdesc = sum(1 for _, d, _ in rows if d)
+    print(f"含车辆描述: {withdesc}/{len(rows)}")
+    print("样本:")
+    for chain, desc, cnt in rows[:8]:
+        print(f"  [{cnt}趟] {chain[:60]}{'…' if len(chain) > 60 else ''}  <<  {desc[:24]}")

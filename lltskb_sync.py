@@ -56,33 +56,27 @@ def load_state():
 
 
 # ---------- jlb.dat 交路表解析 ----------
+# jlb.dat：车辆描述 与 交路链 交替，被控制字节(<0x20)分隔。按切片提取，完整不丢长链。
+_CHAIN = re.compile(r'[A-Z]?\d{1,5}(?:/\d+)?(?:#[A-Z]?\d{1,5}(?:/\d+)?)+')
+_CJK = re.compile(r'[一-鿿]')
+_CARTYPE = re.compile(r'^\d{2}[A-Z]')
+
+
 def parse_jlb(raw):
-    def readable(b):
-        try:
-            s = b.decode("utf-8")
-        except Exception:
-            return None
-        return s if not any(ord(c) < 0x20 for c in s) else None
-
-    tokens, i, n = [], 0, len(raw)
-    while i < n:
-        L = raw[i]
-        if 2 <= L <= 63 and i + 1 + L <= n:
-            s = readable(raw[i + 1:i + 1 + L])
-            if s and len(s) >= 2:
-                tokens.append(s); i += 1 + L; continue
-        i += 1
-
-    chain_re = re.compile(r'^[A-Z]?\d{1,5}(?:/\d+)?(?:#[A-Z]?\d{1,5}(?:/\d+)?)+$')
-    def is_desc(s):
-        return any(k in s for k in ('型', '供风', 'AC380', 'DC600', '集便'))
-
+    runs = re.split(rb'[\x00-\x1f]+', raw)
     rows, last = [], ""
-    for s in tokens:
-        if is_desc(s):
-            last = s
-        elif chain_re.match(s):
-            rows.append((s, last, len(s.split('#'))))
+    for rb in runs:
+        s = rb.decode("utf-8", "ignore")
+        if len(s) < 2:
+            continue
+        m = _CHAIN.search(s)
+        if m and '#' in m.group():
+            parts = [p for p in m.group().split('#') if p and p != '0']
+            if len(parts) >= 2:
+                rows.append(('#'.join(parts), last, len(parts)))
+            continue
+        if _CJK.search(s) or _CARTYPE.match(s):
+            last = s.lstrip('+*!"$%&\'().-/ ').strip()
     return rows
 
 
