@@ -1,0 +1,28 @@
+# 生成/下载的数据（体积大、随时可重新拉取）
+lltskb_data/
+车型图片/
+*.db
+*.apk
+*.dat
+*.js
+train_list.js
+all_train_codes.txt
+car_hook.log
+*.csv
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Android 构建产物（hookmod）
+tools/hookmod/build/
+tools/hookmod/.gradle/
+tools/hookmod/app/build/
+tools/hookmod/local.properties
+tools/hookmod/**/*.iml
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store

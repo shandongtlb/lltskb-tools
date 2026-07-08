@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="false"
+        android:label="路路通车型抓取"
+        android:supportsRtl="true">
+
+        <!-- LSPosed/Xposed 模块声明 -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Hook 路路通 OkHttp，抓取 12306 车型接口请求与响应" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
+        <!-- 作用域：只作用于路路通 -->
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
+    </application>
+
+</manifest>
