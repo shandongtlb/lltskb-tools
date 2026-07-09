@@ -18,6 +18,7 @@
 |---|---|---|
 | **`lltskb_sync.py`** | ⭐ 定期同步离线**交路表**（下 `an.db` → 解包 → 解析 `jlb.dat` → CSV），自带回归护栏 | `down.lltskb.com/an.db`（固定地址） |
 | `parse_jlb.py` | 独立解析 `jlb.dat` 交路表（`lltskb_sync` 已内置同款逻辑） | 本地 `jlb.dat` |
+| **`parse_timetable.py`** | ⭐ **纯离线**解析**车次时刻表**（`t0~t19.dat`）：车次→经停站/到达/发车/停留/里程/开行期，零联网 | 本地 `t.i`+`s.i`+`t*.dat` |
 | `crawl_images.py` | 下载**车型图片**（按 `trainStyle` 去重，分文件夹） | 12306 `getCarDetail` 接口 + 图床 |
 | `crawl_route.py` | 全量查**车次 → 当日车底**，按车底分组还原当日交路 | 12306 `getCarDetail` 接口 |
 | `tools/hookmod/` | LSPosed 模块（逆向用）：hook 路路通 OkHttp + `java.net.URL`，抓接口参数与图床地址 | — |
@@ -60,6 +61,33 @@ lltskb_data/
 - **靠 sha256 判变**，不依赖版本号是否 bump；内容一变即重解析。
 - **回归护栏**：解析结果 `<100 条` 或 `比上次骤降 >40%` → 判定 `jlb.dat` 结构可能随 App 更新改变 → **保留旧 `latest` 不覆盖** + 写 `NEEDS_REVIEW.flag` + 原始包归档待查。平时该文件不存在 = 一切正常；一旦出现 = 需更新 `parse_jlb` 解析逻辑。
 
+### 1.5 车次时刻表离线查询（纯离线，零联网）⭐
+
+从 `lltskb_sync.py` 同步下来的 `latest/` 里直接解析 `t0~t19.dat`，**完全不联网**——正合断网现场使用。
+
+```bash
+python3 parse_timetable.py G1              # 查单个车次经停(站/到达/发车/停留/里程/开行期)
+python3 parse_timetable.py G1 C1001 1461   # 一次查多个
+python3 parse_timetable.py --all           # 全量导出 latest/车次时刻表.csv (13716车次/12万站次, ~1s)
+python3 parse_timetable.py --data DIR G1    # 指定数据目录
+```
+
+单查输出示例（`G1`）：
+
+```
+═ G1  (index=5936 桶=17 type=6 站数=7  开行 20260127~20501231) ═
+ 序 站名          到达    发车    停留  里程km 站台
+  1 北京南         ----    06:30     -       0  17
+  2 沧州西         07:18   07:20    2分     210  2
+  …
+  7 上海虹桥        11:24   ----      -    1318  14
+```
+
+- **数据来源全离线**：`t.i`(车次名) + `s.i`(站名) + `t0~t19.dat`(时刻) + `plat.dat`(站台)，无任何网络请求。
+- **站台号**并入输出（覆盖约 74% 站次，高铁/大站全、普速小站常缺）；纯数字站台号，**检票口/候车厅需 12306 在线**，离线库不含。
+- 13716 车次 100% 解出；抽查 G/D/C/普速/往返对 12306 真值站名+时刻逐站一致（逆向来自反编译 App，见 [FINDINGS §6](docs/FINDINGS.md)）。
+- 车次全集以 `t.i` 为准；已停运/改号车次（如 K1/Z1/T1）本就不在库中。
+
 ### 2. 车型图片下载
 
 ```bash
@@ -85,7 +113,7 @@ python3 crawl_route.py
 
 | 用途 | 地址 / 接口 | 鉴权 |
 |---|---|---|
-| 离线数据包（含交路表） | `http://down.lltskb.com/an.db`（镜像 `http://223.107.87.50:8011/an.db`） | 无 |
+| 离线数据包（含交路表 + **车次时刻表** `t*.dat` + 站名 `s.i`） | `http://down.lltskb.com/an.db`（镜像 `http://223.107.87.50:8011/an.db`） | 无 |
 | 版本清单 | `http://down.lltskb.com/android.ver` | 无 |
 | 车型详情 | `https://mobile.12306.cn/wxxcx/openplatform-inner/miniprogram/wifiapps/appFrontEnd/v2/lounge/open-smooth-common/trainStyleBatch/getCarDetail?trainCode=G18&runningDay=YYYYMMDD&reqType=form&carCode=G18` | **无** |
 | 车型图床 | `https://wifi.12306.cn/resourcecenter/cateringimages/<文件名>` | 无 |

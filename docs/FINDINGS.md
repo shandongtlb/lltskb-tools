@@ -56,3 +56,55 @@
 
 - `mobile.12306.cn/.../queryTrainDiagram`（编组图）、`travelServiceQrcodeTrainInfo`、`bigScreen/queryTrainByStation`
 - `an.db` 同级还有 `api.dat`（552B，base64 + 单字节异或 key=0x63，解出为"车站大屏" cx9z.com 配置，与交路无关）。
+
+## 6. 车次时刻表 `t0.dat`~`t19.dat`（纯离线，已完全逆向 + 设备真值验证）
+
+由反编译 App（`com.lltskb.lltskb.engine` 的 `ResMgr` / `DataMgr` / `QueryBase.getTrainTimeDTO`）抄出，非盲猜。解析实现见 `parse_timetable.py`，13716 车次 100% 解出，抽查 G/D/C/普速/往返 对 12306 真值站名+时刻逐站一致。
+
+### 6.1 索引文件 `.i`（Java `DataInputStream` 格式）
+- `t.i` / `s.i` 结构 = `readShort()`(记录数) + N×`readUTF()`（每条 = 2 字节大端长度 + UTF-8）。
+- `t.i`：**车次全局 index → 车次名**，13716 条，含全类型（G/D/C/S/K/Y/Z/T + 纯数字），往返车次名形如 `4167/4170`、`Z158/5`。
+- `s.i`：**站点 index → 站名**，3304 条。**时刻表里的站就用这个 index。**
+- `getIndex(name)` App 内是二分查找（`/name/` 拼接比较），本工具用 dict 精确 + 往返分段匹配。
+
+### 6.2 关键编码：路路通 2 字节整数 = **hi×255 + lo**（不是 ×256！）
+全库所有 2 字节整数都是 `(b[i]&0xFF)*255 + (b[i+1]&0xFF)`。**这是之前 be16/le16/varint 全部搜不中的根因。** 源自 App `DataMgr.OooOOo0(byte[],int)`。
+
+### 6.3 车次记录定位（桶 + 顺扫）
+- **桶号 = (车次全局 index + 1) % 20** → 打开 `t{桶}.dat`（离线包大写 `T{桶}.dat`，同文件）。
+- 桶文件 = 连续记录，每条 = `[2B 车次index(hi×255+lo)]` + `trainInfo 体`。
+- **下一条偏移 = cur + 17 + 站数×7**（站数 = 记录内 `[15..16]`）。顺扫到记录头 == 目标 index 即命中。
+  （源码 `DataMgr.OooO0oO`：`i2 = i2 + 17 + u255(data,i2+15)*7`）
+
+### 6.4 trainInfo 体结构
+| 偏移 | 字段 | 说明 |
+|---|---|---|
+| `[0]` | type | 车次类型码 |
+| `[1..2]` | priceNo | 票价表号(hi×255+lo) |
+| `[3..6]` | startDate | 7bit×4 打包(`b0+b1×128+b2×16384+b3×2097152`)，解出 = **YYYYMMDD** 开行起 |
+| `[7..10]` | endDate | 同上，开行止（如 `20991231`=长期） |
+| `[11..12]` | ? | 未定 |
+| `[13..14]` | 站数 | hi×255+lo |
+| `[15..]` | 站序列 | 每站 **7 字节**，见下 |
+
+### 6.5 站节点（每站 7 字节）
+| 偏移 | 字段 | 说明 |
+|---|---|---|
+| `[0..1]` | 站 index | hi×255+lo → `s.i` 站名 |
+| `[2]` | 到达时 | 首站为发车时（App 首站到达显示 ----） |
+| `[3]` | 到达分 | |
+| `[4]` | 停留分 | **发车时刻 = 到达 + 停留分**；首/末站为 0 |
+| `[5..6]` | 里程 km | hi×255+lo，自始发累计（京沪 1461 末站=1463 ✓） |
+
+- `startDate/endDate` 决定车次在某查询日是否有效（App `outOfDateFlag`）；本工具原样解为 YYYYMMDD。
+- **未收录的车次**（如某版本已停运/改号的 K1/Z1/T1）在 `t.i` 中根本不存在，不是解析漏项 —— 以 `t.i` 车次全集为准。
+- 附带：`sp.dat` = 车次 index → 12306 `train_no`（`0x0c` 分隔，顺序同 `t.i`）；`s0~s9.dat` 是车站维度时刻（站→车次），结构类似但每站 9/12 字节变长，本工具暂未用。
+
+### 6.6 站台 `plat.dat`（车次×站 → 站台号）
+- 源码 `PlatformMgr`（extends `DataMgr`）。结构：`[4B 条目数]` + N×`([4B 车次idx][4B 站idx][1B 长度][UTF8])`。
+  **注意：这里整数是标准大端 4 字节**（`DataMgr.OooOOOO`），不是 hi×255+lo。
+- `key = 车次idx + "_" + 站idx → 站台号`；`getPlatform(车次idx, 站idx)`。
+- 2026-07 版：128052 条，值全是纯数字站台号（"1"~约"60"，60 种）。**无检票口文字**——检票口/候车厅是在线数据（App `QueryTicketCheck` / `BigScreenModel`）。
+- 覆盖率约 73.8% 站次：**高铁/大站基本全覆盖，普速小站常缺**（站台不固定/未收录）。已并入 `parse_timetable.py` 输出「站台」列。
+
+> 数据同 `jlb.dat` 随 `an.db` 每次更新；若 App 大改此格式，先反编译 `ResMgr`/`DataMgr` 复核（本节即由此得来）。
