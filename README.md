@@ -108,11 +108,13 @@ python3 parse_timetable.py --data DIR G1    # 指定数据目录
 ### 3. 车型图片 + 车型详情表
 
 ```bash
-python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16           # 下图 + _info.json + 汇总CSV
-python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16 --no-img  # 只抓数据+出CSV，不下图(省~1.8G)
+python3 crawl_images.py --all                       # ⭐ 全扫全拉(G/D/C:1-9000)，下图 + _info.json + CSV
+python3 crawl_images.py --all --no-img               # ⭐ 全量但只出CSV，不下图(省~1.8G)
+python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16          # 指定号段
+python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16 --no-img # 指定号段，只出CSV
 ```
 
-参数：车次号段（`前缀:起-止` 逗号分隔）、并发数；`--no-img` 跳过图片。按 `trainStyle` 去重，每个新车型：
+参数：车次号段（`前缀:起-止` 逗号分隔）、并发数；`--all` 全扫 G/D/C:1-9000（可跟并发数如 `--all 24`）；`--no-img` 跳过图片。**普速 K/Z/T 无车型数据故不扫。** 按 `trainStyle` 去重，每个新车型：
 
 - `车型图片/<车型>/_info.json` —— 原始接口数据（`carInfo`/`coachPicList`/`coachDetailPicList`）
 - `车型图片/<车型>/*.png` —— 外观/车厢平面/座位实拍/信息图（`--no-img` 时不下，61 型号全图约 1.8 GB）

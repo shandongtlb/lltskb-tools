@@ -7,10 +7,13 @@
 API 与图床均无需登录态。
 
 用法:
-  python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16   # 下图 + _info.json + 汇总CSV
-  python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16 --no-img  # 只抓数据+出CSV，不下图(省~1.8G)
-参数：车次号段(前缀:起-止, 逗号分隔)、并发数；--no-img 跳过图片；
-      runningDay 默认取当天，--day YYYYMMDD 可覆盖(某些车次当天不开时指定次日)。
+  python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16   # 指定号段：下图 + _info.json + 汇总CSV
+  python3 crawl_images.py --all                              # 全扫全拉(G/D/C 全号段)，下图+CSV
+  python3 crawl_images.py --all --no-img                     # 全量但只出CSV，不下图(省~1.8G)
+参数：车次号段(前缀:起-止, 逗号分隔)、并发数；
+      --all    全扫 G/D/C:1-9000(普速无车型数据，不扫)，可跟并发数 如 `--all 24`；
+      --no-img 跳过图片(只抓数据+出CSV)；
+      --day YYYYMMDD  覆盖 runningDay(默认当天，某些车次当天不开时指定次日)。
 """
 import sys, os, re, json, csv, glob, datetime, threading, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -162,8 +165,13 @@ def main():
         argv.remove("--csv")
     if "--day" in argv:  # 覆盖 runningDay(默认当天)，如某些车次当天不开可指定次日
         di = argv.index("--day"); DAY = argv[di + 1]; del argv[di:di + 2]
-    spec = argv[0] if len(argv) > 0 else "G:1-800,D:1-800,C:1-400"
-    workers = int(argv[1]) if len(argv) > 1 else 12
+    if "--all" in argv:  # 全扫全拉：G/D/C 全号段(普速无车型数据，不扫)
+        argv.remove("--all")
+        spec = "G:1-9000,D:1-9000,C:1-9000"
+        workers = int(argv[0]) if argv else 16
+    else:
+        spec = argv[0] if len(argv) > 0 else "G:1-800,D:1-800,C:1-400"
+        workers = int(argv[1]) if len(argv) > 1 else 12
     codes = gen_codes(spec)
     os.makedirs(OUTROOT, exist_ok=True)
     print(f"扫描 {len(codes)} 个车次, 并发 {workers}, 日期 {DAY}"
