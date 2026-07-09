@@ -9,14 +9,15 @@ API 与图床均无需登录态。
 用法:
   python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16   # 下图 + _info.json + 汇总CSV
   python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16 --no-img  # 只抓数据+出CSV，不下图(省~1.8G)
-参数：车次号段(前缀:起-止, 逗号分隔)、并发数；--no-img 跳过图片。
+参数：车次号段(前缀:起-止, 逗号分隔)、并发数；--no-img 跳过图片；
+      runningDay 默认取当天，--day YYYYMMDD 可覆盖(某些车次当天不开时指定次日)。
 """
-import sys, os, re, json, csv, glob, threading, urllib.request, urllib.error
+import sys, os, re, json, csv, glob, datetime, threading, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 NO_IMG = False           # --no-img: 只抓 getCarDetail 数据(_info.json)+出CSV，不下图
+DAY = datetime.date.today().strftime("%Y%m%d")  # runningDay 默认当天，--day YYYYMMDD 可覆盖
 
-DAY = "20260708"
 API = ("https://mobile.12306.cn/wxxcx/openplatform-inner/miniprogram/wifiapps/"
        "appFrontEnd/v2/lounge/open-smooth-common/trainStyleBatch/getCarDetail")
 IMGBASE = "https://wifi.12306.cn/resourcecenter/cateringimages/"
@@ -153,12 +154,14 @@ def gen_codes(spec):
     return codes
 
 def main():
-    global NO_IMG
+    global NO_IMG, DAY
     argv = list(sys.argv[1:])
     if "--no-img" in argv:
         NO_IMG = True; argv.remove("--no-img")
     if "--csv" in argv:  # CSV 默认就会生成，此 flag 仅为语义显式，接受不报错
         argv.remove("--csv")
+    if "--day" in argv:  # 覆盖 runningDay(默认当天)，如某些车次当天不开可指定次日
+        di = argv.index("--day"); DAY = argv[di + 1]; del argv[di:di + 2]
     spec = argv[0] if len(argv) > 0 else "G:1-800,D:1-800,C:1-400"
     workers = int(argv[1]) if len(argv) > 1 else 12
     codes = gen_codes(spec)
