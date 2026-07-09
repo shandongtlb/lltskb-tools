@@ -3,7 +3,8 @@
 """
 枚举 12306 车型数据/图片：按车次号段扫 getCarDetail，按 trainStyle 去重，
 每见到一个新车型：写 车型图片/<trainStyle>/_info.json（结构化数据）+ 整套图，
-跑完自动汇总所有车型 → 车型详情.csv（编组/长度/定员/时速/餐车/各设施车厢…）。
+跑完自动汇总所有车型 → 车型详情.csv（编组/长度/定员/时速/餐车/各设施车厢
++ 座位类型 + 编组明细，后两列来自 coachDetailPicList/coachPicList）。
 副产物：把每趟车的 车次→车型 落 车次车型.csv（零额外请求，捡去重时丢掉的数据），
 供 join_cartype.py 离线合到交路表。API 与图床均无需登录态。
 
@@ -119,9 +120,17 @@ def worker(code):
     print(f"[新车型] {style}  ({cartype})  via {code}  {tag}", flush=True)
     return style
 
+def _join_names(items, sep):
+    """把 coachPicList/coachDetailPicList 的 pictureName 拼成一列。"""
+    return sep.join((it.get("pictureName") or "").strip()
+                    for it in (items or []) if (it.get("pictureName") or "").strip())
+
+
 def build_csv():
     """汇总 OUTROOT 下所有 _info.json → 车型详情.csv（一行一车型）。
-    列 = 车型/类型/样本车次/车厢数 + 动态收集的 carInfo 字段(编组/长度/定员/时速/餐车/各设施)。"""
+    列 = 车型/类型/样本车次/样例车底/车厢数 + 动态 carInfo(编组/长度/定员/时速/餐车/各设施)
+       + 座位类型(coachDetailPicList，各座别及描述) + 编组明细(coachPicList，各车厢座位分布)。
+    后两列数据本就在 _info.json 里(getCarDetail 返回)，零额外请求。"""
     rows, cols = [], []
     for jf in sorted(glob.glob(os.path.join(OUTROOT, "*", "_info.json"))):
         try:
@@ -131,6 +140,7 @@ def build_csv():
         raw = d.get("raw", {})
         r = {"车型": d.get("trainStyle"), "类型": d.get("carType"),
              "样本车次": d.get("sampleTrainCode"),
+             "样例车底": raw.get("carCode", ""),
              "车厢数": len(raw.get("coachPicList", []))}
         for x in raw.get("carInfo", []):
             k, v = x.get("pictureName"), x.get("pictureValue")
@@ -138,10 +148,12 @@ def build_csv():
                 r[k] = v
                 if k not in cols:
                     cols.append(k)
+        r["座位类型"] = _join_names(raw.get("coachDetailPicList"), "/")
+        r["编组明细"] = _join_names(raw.get("coachPicList"), " | ")
         rows.append(r)
     if not rows:
         return None, 0
-    header = ["车型", "类型", "样本车次", "车厢数"] + cols
+    header = ["车型", "类型", "样本车次", "样例车底", "车厢数"] + cols + ["座位类型", "编组明细"]
     outpath = os.path.join(os.path.dirname(OUTROOT), "车型详情.csv")
     with open(outpath, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
