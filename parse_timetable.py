@@ -18,11 +18,14 @@
   站名 = s.i.getName(站idx)。发车时刻 = 到达 + 停留分。
   plat.dat: [4B 条目数] + N×([4B 车次idx][4B 站idx][1B 长度][UTF8]) → 站台号
             （高铁/大站为主，普速小站常缺；纯数字站台号，无检票口文字。整数为标准大端 4B）。
+  s0~s9.dat: 车站反查。桶 = (站idx+1)%10，记录 = [站idx 2B][车次数 2B][车次idx × N]，
+             只存车次 index 列表，时刻回 t*.dat 取（源码 QueryCZ/DataMgr.OooO0o）。
 
 所有多字节整数是路路通特有的 **hi×255 + lo**（不是 ×256！），源自 App ResMgr/DataMgr。
 
 用法:
-  python3 parse_timetable.py G1              # 查单个车次经停
+  python3 parse_timetable.py G1              # 查单个车次经停(站/到达/发车/停留/里程/站台)
+  python3 parse_timetable.py --station 北京南  # 按车站反查停靠车次(-s 亦可)
   python3 parse_timetable.py --all           # 全量导出 车次时刻表.csv
   python3 parse_timetable.py --data DIR ...  # 指定数据目录(默认 lltskb_data/latest)
 """
@@ -54,6 +57,10 @@ class Timetable:
         self.stations = read_index(os.path.join(datadir, "s.i"))
         self.tidx = {n: k for k, n in enumerate(self.trains)}
         self._bucket_cache = {}
+        self._sbucket_cache = {}
+        self.sidx = {}
+        for k, n in enumerate(self.stations):
+            self.sidx.setdefault(n, k)  # 同名站保留首个 index
         self.plat = self._load_plat(os.path.join(datadir, "plat.dat"))
 
     @staticmethod
@@ -140,6 +147,7 @@ class Timetable:
                 "stop_min": 0 if (first or last) else stop,
                 "dist_km": dist,
                 "platform": self.plat.get((gidx, sidx), ""),  # 站台号(高铁/大站为主，小站常缺)
+                "sidx": sidx,
             })
             off += 7
         return {
@@ -149,6 +157,59 @@ class Timetable:
             "end_date": ti[7] + ti[8] * 128 + ti[9] * 16384 + ti[10] * 2097152,
             "stops": rows,
         }
+
+    def _station_bucket(self, sidx):
+        b = (sidx + 1) % 10
+        if b not in self._sbucket_cache:
+            for name in ("s%d.dat" % b, "S%d.dat" % b):  # App 小写；离线包大写
+                p = os.path.join(self.datadir, name)
+                if os.path.exists(p):
+                    self._sbucket_cache[b] = open(p, "rb").read(); break
+            else:
+                self._sbucket_cache[b] = b""
+        return self._sbucket_cache[b]
+
+    def _train_indices_at(self, sidx):
+        """s{(sidx+1)%10}.dat 里该站的停靠车次 index 列表。
+        记录 = [站idx 2B][车次数 2B][车次idx × N]（均 hi×255+lo）；源码 DataMgr.OooO0o。"""
+        data = self._station_bucket(sidx)
+        i, n = 0, len(data)
+        while i + 4 <= n:
+            rec = _u255(data, i)
+            cnt = _u255(data, i + 2)
+            nxt = i + 4 + cnt * 2
+            if rec == sidx:
+                return [_u255(data, i + 4 + k * 2) for k in range(cnt) if i + 4 + k * 2 + 1 < n]
+            i = nxt
+        return []
+
+    def station(self, station_name):
+        """按车站反查停靠车次。返回 {name, sidx, trains[...]}，trains 按到达时刻排序。
+        每趟 = {code, arrive, depart, platform, dist_km, from, to, terminal(是否始发/终到)}。"""
+        name = station_name.strip()
+        if name not in self.sidx:
+            return None
+        sidx = self.sidx[name]
+        rows = []
+        for gidx in self._train_indices_at(sidx):
+            if gidx >= len(self.trains):
+                continue
+            info = self.stops(self.trains[gidx])
+            if not info:
+                continue
+            here = next((s for s in info["stops"] if s["sidx"] == sidx), None)
+            if here is None:
+                continue
+            first, last = info["stops"][0], info["stops"][-1]
+            rows.append({
+                "code": info["code"],
+                "arrive": here["arrive"], "depart": here["depart"],
+                "platform": here["platform"], "dist_km": here["dist_km"],
+                "from": first["name"], "to": last["name"],
+                "terminal": here is first or here is last,
+            })
+        rows.sort(key=lambda r: r["arrive"] or r["depart"] or "99:99")
+        return {"name": name, "sidx": sidx, "trains": rows}
 
     def export_all(self, outpath):
         """全量导出到 CSV: 车次,序号,站名,到达,发车,停留分,里程km。返回(车次数,记录行数)。"""
@@ -175,15 +236,30 @@ def _default_datadir():
 
 def main(argv):
     datadir = _default_datadir()
-    args = []
+    args, stations = [], []
     i = 0
     while i < len(argv):
         if argv[i] == "--data":
             datadir = argv[i + 1]; i += 2
+        elif argv[i] in ("--station", "-s"):
+            stations.append(argv[i + 1]); i += 2
         else:
             args.append(argv[i]); i += 1
 
     tt = Timetable(datadir)
+
+    if stations:
+        for name in stations:
+            info = tt.station(name)
+            if not info:
+                print("未找到车站: %s" % name); continue
+            print("═ %s 停靠车次 %d 趟（按到达排序） ═" % (info["name"], len(info["trains"])))
+            print(" 车次      到达    发车    站台  始发→终到")
+            for t in info["trains"]:
+                print(" %-8s  %-6s  %-6s  %-3s   %s→%s" % (
+                    t["code"], t["arrive"] or "始发", t["depart"] or "终到",
+                    t["platform"] or "—", t["from"], t["to"]))
+        return
 
     if not args or args[0] == "--all":
         outpath = os.path.join(datadir, "车次时刻表.csv")

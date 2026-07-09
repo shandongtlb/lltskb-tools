@@ -66,10 +66,22 @@ lltskb_data/
 从 `lltskb_sync.py` 同步下来的 `latest/` 里直接解析 `t0~t19.dat`，**完全不联网**——正合断网现场使用。
 
 ```bash
-python3 parse_timetable.py G1              # 查单个车次经停(站/到达/发车/停留/里程/开行期)
+python3 parse_timetable.py G1              # 查单个车次经停(站/到达/发车/停留/里程/站台/开行期)
 python3 parse_timetable.py G1 C1001 1461   # 一次查多个
+python3 parse_timetable.py --station 北京南  # 按车站反查停靠车次(-s 亦可)
 python3 parse_timetable.py --all           # 全量导出 latest/车次时刻表.csv (13716车次/12万站次, ~1s)
 python3 parse_timetable.py --data DIR G1    # 指定数据目录
+```
+
+按车站反查输出示例（`--station 延吉西`，按到达排序）：
+
+```
+═ 延吉西 停靠车次 72 趟（按到达排序） ═
+ 车次      到达    发车    站台  始发→终到
+ C1002     始发      05:55   1     延吉西→长春
+ C1004     06:34   06:37   1     珲春→长春
+ C1001     07:40   终到      4     长春→延吉西
+ …
 ```
 
 单查输出示例（`G1`）：

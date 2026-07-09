@@ -98,7 +98,7 @@
 
 - `startDate/endDate` 决定车次在某查询日是否有效（App `outOfDateFlag`）；本工具原样解为 YYYYMMDD。
 - **未收录的车次**（如某版本已停运/改号的 K1/Z1/T1）在 `t.i` 中根本不存在，不是解析漏项 —— 以 `t.i` 车次全集为准。
-- 附带：`sp.dat` = 车次 index → 12306 `train_no`（`0x0c` 分隔，顺序同 `t.i`）；`s0~s9.dat` 是车站维度时刻（站→车次），结构类似但每站 9/12 字节变长，本工具暂未用。
+- 附带：`sp.dat` = 车次 index → 12306 `train_no`（`0x0c` 分隔，顺序同 `t.i`）。`s0~s9.dat` 车站维度（站→停靠车次）见 §6.7。
 
 ### 6.6 站台 `plat.dat`（车次×站 → 站台号）
 - 源码 `PlatformMgr`（extends `DataMgr`）。结构：`[4B 条目数]` + N×`([4B 车次idx][4B 站idx][1B 长度][UTF8])`。
@@ -106,5 +106,11 @@
 - `key = 车次idx + "_" + 站idx → 站台号`；`getPlatform(车次idx, 站idx)`。
 - 2026-07 版：128052 条，值全是纯数字站台号（"1"~约"60"，60 种）。**无检票口文字**——检票口/候车厅是在线数据（App `QueryTicketCheck` / `BigScreenModel`）。
 - 覆盖率约 73.8% 站次：**高铁/大站基本全覆盖，普速小站常缺**（站台不固定/未收录）。已并入 `parse_timetable.py` 输出「站台」列。
+
+### 6.7 车站反查 `s0~s9.dat`（站 → 停靠车次）
+- 源码 `QueryCZ.OooO` + `ResMgr.OooOO0`：**桶 = (站 index + 1) % 10** → `s{桶}.dat`（离线包大写 `S{桶}.dat`）。
+- 记录 = `[站idx 2B][车次数 2B][车次idx × N]`（均 hi×255+lo）；顺扫记录头 == 站 index 命中（源码 `DataMgr.OooO0o`：`next = i + 4 + count×2`）。
+- **只存车次 index 列表，不含时刻**——App/本工具拿到车次后回 `t*.dat` 用 `getTrainTimeDTO(车次idx, 站idx, 站idx)` 取该站到发时刻（`QueryCZ` 就这么做）。
+- 已实现：`parse_timetable.py --station <站名>` → 该站所有停靠车次（到达/发车/站台/始发终到），按到达排序。北京南 552 趟、延吉西 72 趟，与正查交叉一致。
 
 > 数据同 `jlb.dat` 随 `an.db` 每次更新；若 App 大改此格式，先反编译 `ResMgr`/`DataMgr` 复核（本节即由此得来）。
