@@ -4,7 +4,8 @@
 枚举 12306 车型数据/图片：按车次号段扫 getCarDetail，按 trainStyle 去重，
 每见到一个新车型：写 车型图片/<trainStyle>/_info.json（结构化数据）+ 整套图，
 跑完自动汇总所有车型 → 车型详情.csv（编组/长度/定员/时速/餐车/各设施车厢…）。
-API 与图床均无需登录态。
+副产物：把每趟车的 车次→车型 落 车次车型.csv（零额外请求，捡去重时丢掉的数据），
+供 join_cartype.py 离线合到交路表。API 与图床均无需登录态。
 
 用法:
   python3 crawl_images.py "G:1-4000,D:1-6000,C:1-2000" 16   # 指定号段：下图 + _info.json + 汇总CSV
@@ -31,6 +32,8 @@ seen_style = {}          # trainStyle -> sample trainCode
 seen_lock = threading.Lock()
 img_cache = set()        # 已下载的图片文件名(跨车型去重)
 img_lock = threading.Lock()
+code_map = {}            # 车次 -> (trainStyle, carType, 当日carCode)：每趟都记(不去重)，
+code_lock = threading.Lock()  # 供 join_cartype.py 离线 join 交路表。零额外请求，纯捡漏。
 
 def http_get(url, timeout=20, binary=False):
     req = urllib.request.Request(url, headers={
@@ -105,6 +108,8 @@ def worker(code):
         return None
     style = data.get("trainStyle") or data.get("carCode") or "UNKNOWN"
     cartype = data.get("carType", "")
+    with code_lock:  # 每趟车都记下 车次→车型(捡漏)，不受下面按车型去重影响
+        code_map[code] = (style, cartype, data.get("carCode", ""))
     with seen_lock:
         if style in seen_style:
             return None
@@ -144,6 +149,21 @@ def build_csv():
         for r in rows:
             w.writerow(r)
     return outpath, len(rows)
+
+
+def write_code_style():
+    """把每趟车的 车次→车型 落到 车次车型.csv（脚本同级），供 join_cartype.py 离线合表。
+    这是本次扫描的副产物——零额外请求，捡的是 getCarDetail 本就返回、去重时被丢掉的数据。"""
+    if not code_map:
+        return None, 0
+    outpath = os.path.join(os.path.dirname(OUTROOT), "车次车型.csv")
+    with open(outpath, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["车次", "车型", "类型", "当日车底", "查询日期"])
+        for code in sorted(code_map):
+            style, cartype, carcode = code_map[code]
+            w.writerow([code, style, cartype, carcode, DAY])
+    return outpath, len(code_map)
 
 
 def gen_codes(spec):
@@ -189,6 +209,10 @@ def main():
     outpath, ncsv = build_csv()
     if outpath:
         print(f"\n✓ 车型详情汇总: {ncsv} 车型 → {outpath}", flush=True)
+    cpath, ncode = write_code_style()
+    if cpath:
+        print(f"✓ 车次→车型对应(捡漏): {ncode} 车次 → {cpath}", flush=True)
+        print(f"  离线合表交路: python3 join_cartype.py", flush=True)
 
 if __name__ == "__main__":
     main()

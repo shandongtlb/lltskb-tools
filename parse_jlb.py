@@ -6,8 +6,11 @@
 jlb.dat 是明文二进制：车型/车辆描述 与 交路链 交替排列，被控制字节(<0x20)分隔。
 交路链 = 若干车次用 '#' 连接。每条链关联其前最近出现的车辆描述。
 
+车辆描述比较口语化(如 "25G型,DC600V,双管供风,集便")，另抽一列规范车型码
+(extract_cartype: 25G / CR400BF-S / CRH2A …)，便于按车型筛选统计。
+
 用法: python3 parse_jlb.py [jlb.dat 路径]   默认 ./jlb.dat
-输出: 车次交路.csv / 车次查交路.csv（与 jlb.dat 同目录）
+输出: 车次交路.csv(交路链|车辆描述|车型|车次数) / 车次查交路.csv(车次|所在交路链|车辆描述|车型)
 
 —— 解析踩过的坑（详见 docs/FINDINGS.md），改前务必看：
   1. 长度前缀分帧 → >63 字节长链整条被跳过。改为按控制字节切片。
@@ -26,6 +29,20 @@ _LEAD0 = re.compile(r'^0(?=(?:DJ|[CDGJKLPSTYZ])?\d)')
 _LETTER = re.compile(r'[A-Z]')
 _CJK = re.compile(r'[一-鿿]')
 _CARTYPE = re.compile(r'^\d{2}[A-Z]')
+
+# 从口语化 车辆描述 抽规范车型码：CR复兴号 / CRH和谐号 / 25系普速。抽不到(如"高峰线")返回""。
+# 注意 25 系不带可选前导数字——"225G"/"025G" 那个多余首位数字是 jlb 分帧漏进来的噪声，真型即 25G。
+_MODEL = re.compile(
+    r'CRH\d{1,3}[A-Z]{0,2}(?:-[A-Z]{1,2})?'    # CRH2A CRH380AL CRH1A-A CRH380BG
+    r'|CR\d{3}[A-Z]{1,2}\d?(?:-[A-Z]{1,2})?'   # CR400BF-S CR200J3-C CR400AF-Z CR300BF
+    r'|2[0-9][A-Z]{1,2}'                        # 25G 25T 25K 25B 25Z 22B
+)
+
+
+def extract_cartype(desc):
+    """从口语化 车辆描述 抽规范车型码；抽不到(如'高峰线'/空描述)返回 ''。纯离线字符串处理。"""
+    m = _MODEL.search((desc or "").upper().replace("，", ","))
+    return m.group() if m else ""
 
 
 def _expand(part):
@@ -70,18 +87,19 @@ def parse_jlb(raw):
 def write_csvs(rows, outdir):
     with open(os.path.join(outdir, "车次交路.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
-        w.writerow(["交路链", "车辆描述", "车次数"])
+        w.writerow(["交路链", "车辆描述", "车型", "车次数"])
         for chain, desc, cnt in rows:
-            w.writerow([chain, desc, cnt])
+            w.writerow([chain, desc, extract_cartype(desc), cnt])
     codemap = {}
     for chain, desc, cnt in rows:
         for c in chain.split('#'):
             codemap.setdefault(c, (chain, desc))
     with open(os.path.join(outdir, "车次查交路.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
-        w.writerow(["车次", "所在交路链", "车辆描述"])
+        w.writerow(["车次", "所在交路链", "车辆描述", "车型"])
         for c in sorted(codemap):
-            w.writerow([c, codemap[c][0], codemap[c][1]])
+            chain, desc = codemap[c]
+            w.writerow([c, chain, desc, extract_cartype(desc)])
     return len(codemap)
 
 
@@ -93,5 +111,10 @@ if __name__ == "__main__":
     print(f"交路链: {len(rows)} 条")
     print(f"覆盖车次: {ncodes} 个")
     print(f"含车辆描述: {sum(1 for _, d, _ in rows if d)}/{len(rows)}")
+    from collections import Counter
+    styles = Counter(extract_cartype(d) for _, d, _ in rows)
+    hit = sum(n for s, n in styles.items() if s)
+    print(f"抽出车型: {hit}/{len(rows)} 链 → {len([s for s in styles if s])} 种")
     for chain, desc, cnt in rows[:6]:
-        print(f"  [{cnt}趟] {chain[:56]}{'…' if len(chain) > 56 else ''}  <<  {desc[:22]}")
+        mo = extract_cartype(desc)
+        print(f"  [{cnt}趟] {chain[:48]}{'…' if len(chain) > 48 else ''}  <<  [{mo or '—'}] {desc[:20]}")
